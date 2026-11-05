@@ -1,5 +1,9 @@
 @echo off
-set COMPILER=D:\Windhawk\Compiler\bin\clang++.exe
+if exist "D:\Windhawk\Compiler\bin\clang++.exe" (
+    set COMPILER=D:\Windhawk\Compiler\bin\clang++.exe
+) else (
+    set COMPILER=clang++.exe
+)
 
 if not exist bin mkdir bin
 

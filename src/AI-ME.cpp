@@ -15,8 +15,8 @@
 #include <cstdarg>
 #include <cwchar>
 
-#define WH_MOD_ID L"ai-voice-typing"
-#define WH_MOD_VERSION L"2.0.0"
+#define APP_ID L"AI-ME"
+#define APP_VERSION L"2.0.0"
 
 static const WCHAR kAppRegSubKey[] = LR"(Software\AI-ME)";
 
@@ -183,7 +183,7 @@ std::atomic<HWND> g_settingsWnd;
 // The log
 
 // Its last lines, kept in memory for the bug report (FlowVoice's "include
-// the technical log"): Windhawk's own log only has them while its logging is
+// the technical log"): AI-ME's own log only has them while its logging is
 // on. Nothing dictated is ever logged.
 SRWLOCK g_logLock = SRWLOCK_INIT;
 std::deque<std::wstring> g_logLines;
@@ -3815,7 +3815,7 @@ HttpResult HttpsRequest(PCWSTR method,
     char buffer[16 * 1024];
     HINTERNET session =
         call.step && call.closed
-            ? WinHttpOpen(L"Windhawk-AIVoiceTyping", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            ? WinHttpOpen(L"AI-ME-Voice-Assistant", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC)
             : nullptr;
     HINTERNET connection =
@@ -4652,7 +4652,7 @@ ChatReply PostChat(std::string_view provider,
     std::wstring headers = L"Content-Type: application/json\r\n" + AuthHeader(key);
     if (provider == "openrouter") {
         // (OpenRouter's app attribution.)
-        headers += L"HTTP-Referer: https://windhawk.net/mods/ai-voice-typing\r\n"
+        headers += L"HTTP-Referer: https://github.com/RobsHs/AI-ME\r\n"
                    L"X-Title: AI-ME\r\n";
     }
     const HttpResult http =
@@ -5374,7 +5374,7 @@ Refined Refine(const std::wstring& raw,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Settings: the Windhawk settings page only has the notification area icon;
+// Settings: the AI-ME settings page only has the notification area icon;
 // everything else is in the settings window (Config).
 
 struct Settings {
@@ -9745,8 +9745,8 @@ class FlagPainter {
 // through; the window never takes the focus.
 
 HMODULE g_module;
-const WCHAR kOverlayClass[] = L"AIVoiceTypingOverlay_" WH_MOD_ID;
-const WCHAR kTrayClass[] = L"AIVoiceTypingTray_" WH_MOD_ID;
+const WCHAR kOverlayClass[] = L"AI_ME_Overlay_Window";
+const WCHAR kTrayClass[] = L"AI_ME_Tray_Window";
 
 constexpr int kHotkeyDictate = 1;
 constexpr int kHotkeyEscape = 2;
@@ -10129,7 +10129,7 @@ HICON MakeMarkIcon(int size) {
 // per frame only the box moves. Needs Windows' transparency effects (off, or
 // with the energy saver, the bar stays solid).
 
-const WCHAR kGlassClass[] = L"AIVoiceTypingGlass_" WH_MOD_ID;
+const WCHAR kGlassClass[] = L"AI_ME_Glass_Window";
 
 bool GlassAvailable() {
     DWORD transparency = 1;
@@ -12602,7 +12602,7 @@ LRESULT Overlay::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 // Styles, Providers, Speech, Shortcuts, General, About), drawn with
 // Direct2D. Text fields are native edit controls over the drawing.
 
-const WCHAR kSettingsClass[] = L"AIVoiceTypingSettings_" WH_MOD_ID;
+const WCHAR kSettingsClass[] = L"AI_ME_Settings_Window";
 
 constexpr UINT_PTR kSettingsTimer = 1;
 // The history's "copied" tick goes back to the copy icon.
@@ -15527,9 +15527,9 @@ void SettingsWindow::BuildGeneral(float x, float w, float& y) {
            tray, 110);
     y += AddText(x, y, w,
                  T(L"The notification area icon is turned on or off in the mod's settings in "
-                   L"Windhawk.",
+                   L"AI-ME.",
                    L"O ícone da área de notificação é ligado ou desligado nas configurações do "
-                   L"mod no Windhawk."),
+                   L"mod no AI-ME."),
                  12.5f, DWRITE_FONT_WEIGHT_NORMAL, 2);
 }
 
@@ -15571,7 +15571,7 @@ std::wstring UrlEncode(std::wstring_view text) {
     return out;
 }
 
-// A new issue in the Windhawk mods repository (where the mod's bugs are
+// A new issue in the AI-ME mods repository (where the mod's bugs are
 // tracked), with the versions filled in. Nothing dictated goes with it.
 // The log's last lines for a report (up to `maxChars`): API keys and the
 // user's folder and name taken out.
@@ -15624,7 +15624,7 @@ void SettingsWindow::BuildAbout(float x, float w, float& y) {
     mark.kind = W::Mark;
     mark.r = D2D1::RectF(x, y, x + 72, y + 72);
     m_widgets.push_back(mark);
-    const std::wstring version = WH_MOD_VERSION;
+    const std::wstring version = APP_VERSION;
     AddText(x + 92, y + 8, w - 92,
             L"AI-ME  v" + version.substr(0, version.rfind(L'.')),
             26, DWRITE_FONT_WEIGHT_BOLD);
@@ -17787,13 +17787,13 @@ constexpr const char* kThemes[] = {"system", "light", "dark"};
 constexpr PCWSTR kIssueUrl = L"https://github.com/robshs";
 
 // The icon's id. Windows 11 keeps each icon by its program and id, and this
-// program is windhawk.exe, whose own icon has id 1: with the same id, both
-// were one icon for Windows (the click opened Windhawk). A hash of the mod
-// id: unlike Windhawk's and stable across restarts (the user's "show icon"
+// program is AI-ME.exe, whose own icon has id 1: with the same id, both
+// were one icon for Windows (the click opened AI-ME). A hash of the mod
+// id: unlike AI-ME's and stable across restarts (the user's "show icon"
 // choice is kept).
 UINT TrayIconId() {
     UINT hash = 2166136261u;
-    for (PCWSTR p = WH_MOD_ID; *p; p++) {
+    for (PCWSTR p = APP_ID; *p; p++) {
         hash = (hash ^ (UINT)*p) * 16777619u;
     }
     return hash | 0x80000000u;
@@ -18160,10 +18160,10 @@ bool RegisterClasses() {
     return true;
 }
 
-BOOL WhTool_ModInit() {
+BOOL AppInit() {
     GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                      (LPCWSTR)&WhTool_ModInit, &g_module);
+                      (LPCWSTR)&AppInit, &g_module);
     // (The texts' language is set once the configuration is read.)
     g_userSid = CurrentUserSid();
     if (g_userSid.empty()) {
@@ -18194,7 +18194,7 @@ void WhTool_ModSettingsChanged() {
     }
 }
 
-void WhTool_ModUninit() {
+void AppUninit() {
     g_stopping = true;
     SetEvent(g_stopEvent);
     if (g_ctlThread) {
@@ -20199,16 +20199,16 @@ constexpr UiText kUiTexts[] = {
       L"Диктовки этого сеанса, только в памяти: на диск ничего не сохраняется.",
       L"इस सत्र के डिक्टेशन, केवल मेमोरी में: डिस्क पर कुछ भी सहेजा नहीं जाता।",
       L"এই সেশনের ডিক্টেশন, শুধু মেমরিতে: ডিস্কে কিছুই সংরক্ষিত হয় না।"}},
-    {{L"The notification area icon is turned on or off in the mod's settings in Windhawk.",
-      L"El icono del área de notificación se activa o desactiva en la configuración del mod en Windhawk.",
-      L"O ícone da área de notificação é ligado ou desligado nas configurações do mod no Windhawk.",
-      L"L'icône de la barre d'état système s'active ou se désactive dans les paramètres du mod dans Windhawk.",
-      L"Das Symbol im Infobereich wird in den Einstellungen des Mods in Windhawk ein- oder ausgeschaltet.",
-      L"通知領域アイコンのオン/オフは、Windhawk のこの Mod の設定で切り替えます。",
-      L"通知区域图标可在 Windhawk 中此 Mod 的设置里打开或关闭。",
-      L"Значок в области уведомлений включается и отключается в настройках мода в Windhawk.",
-      L"सूचना क्षेत्र आइकन को Windhawk में मॉड की सेटिंग्स से चालू या बंद किया जाता है।",
-      L"বিজ্ঞপ্তি এলাকার আইকন Windhawk-এ মডের সেটিংস থেকে চালু বা বন্ধ করা হয়।"}},
+    {{L"The notification area icon is turned on or off in the mod's settings in AI-ME.",
+      L"El icono del área de notificación se activa o desactiva en la configuración del mod en AI-ME.",
+      L"O ícone da área de notificação é ligado ou desligado nas configurações do mod no AI-ME.",
+      L"L'icône de la barre d'état système s'active ou se désactive dans les paramètres du mod dans AI-ME.",
+      L"Das Symbol im Infobereich wird in den Einstellungen des Mods in AI-ME ein- oder ausgeschaltet.",
+      L"通知領域アイコンのオン/オフは、AI-ME のこの Mod の設定で切り替えます。",
+      L"通知区域图标可在 AI-ME 中此 Mod 的设置里打开或关闭。",
+      L"Значок в области уведомлений включается и отключается в настройках мода в AI-ME.",
+      L"सूचना क्षेत्र आइकन को AI-ME में मॉड की सेटिंग्स से चालू या बंद किया जाता है।",
+      L"বিজ্ঞপ্তি এলাকার আইকন AI-ME-এ মডের সেটিংস থেকে চালু বা বন্ধ করা হয়।"}},
     {{L"AI voice dictation in any app.",
       L"Dictado por voz con IA en cualquier app.",
       L"Ditado por voz com IA em qualquer app.",
@@ -20549,16 +20549,16 @@ constexpr UiText kUiTexts[] = {
       L"Этих настроек и панели. «Автоматически» — как в Windows.",
       L"इन सेटिंग्स और बार की। स्वचालित Windows का पालन करता है।",
       L"এই সেটিংস এবং বারের। স্বয়ংক্রিয় Windows অনুসরণ করে।"}},
-    {{L"It started with a simple annoyance: thinking out loud is fast, typing is not. You speak, and finished text lands at your cursor, in the way you write. This mod brings the core of FlowVoice to Windhawk.",
-      L"Nació de una molestia simple: pensar en voz alta es rápido, escribir no. Hablas y el texto queda listo donde está el cursor, con tu forma de escribir. Este mod trae lo esencial de FlowVoice a Windhawk.",
-      L"Nasceu de um incômodo simples: pensar em voz alta é rápido, digitar não. Você fala e o texto chega pronto no lugar do cursor, com o seu jeito de escrever. Este mod traz o essencial do FlowVoice para o Windhawk.",
-      L"Tout est parti d'un simple agacement : penser à voix haute est rapide, taper ne l'est pas. Vous parlez, et le texte fini arrive à votre curseur, à votre façon d'écrire. Ce mod apporte l'essentiel de FlowVoice à Windhawk.",
-      L"Es begann mit einem einfachen Ärgernis: Laut denken geht schnell, Tippen nicht. Sie sprechen, und fertiger Text landet an Ihrem Cursor, so wie Sie schreiben. Dieser Mod bringt den Kern von FlowVoice zu Windhawk.",
-      L"きっかけは単純な不満でした。声に出して考えるのは速いのに、タイピングは遅い。話すだけで、あなたの書き方で仕上がったテキストがカーソル位置に入ります。この Mod は FlowVoice の中核を Windhawk にもたらします。",
-      L"它源于一个简单的烦恼：边想边说很快，打字却不然。你开口说话，成稿的文本就会以你的写作方式出现在光标处。这个 Mod 将 FlowVoice 的核心带到了 Windhawk。",
-      L"Всё началось с простой досады: думать вслух быстро, а печатать — нет. Вы говорите, и готовый текст появляется у курсора, так, как пишете вы. Этот мод переносит основу FlowVoice в Windhawk.",
-      L"इसकी शुरुआत एक छोटी-सी परेशानी से हुई: ज़ोर से सोचना तेज़ है, टाइप करना नहीं। आप बोलते हैं, और तैयार टेक्स्ट आपके लिखने के तरीके में कर्सर की जगह पहुँच जाता है। यह मॉड FlowVoice का मूल Windhawk में लाता है।",
-      L"এর শুরু একটি সাধারণ বিরক্তি থেকে: জোরে ভাবা দ্রুত, টাইপ করা নয়। আপনি বলেন, আর তৈরি টেক্সট আপনার লেখার ধরনে কার্সারের জায়গায় পৌঁছে যায়। এই মড FlowVoice-এর মূল অংশটি Windhawk-এ নিয়ে আসে।"}},
+    {{L"It started with a simple annoyance: thinking out loud is fast, typing is not. You speak, and finished text lands at your cursor, in the way you write. This mod brings the core of FlowVoice to AI-ME.",
+      L"Nació de una molestia simple: pensar en voz alta es rápido, escribir no. Hablas y el texto queda listo donde está el cursor, con tu forma de escribir. Este mod trae lo esencial de FlowVoice a AI-ME.",
+      L"Nasceu de um incômodo simples: pensar em voz alta é rápido, digitar não. Você fala e o texto chega pronto no lugar do cursor, com o seu jeito de escrever. Este mod traz o essencial do FlowVoice para o AI-ME.",
+      L"Tout est parti d'un simple agacement : penser à voix haute est rapide, taper ne l'est pas. Vous parlez, et le texte fini arrive à votre curseur, à votre façon d'écrire. Ce mod apporte l'essentiel de FlowVoice à AI-ME.",
+      L"Es begann mit einem einfachen Ärgernis: Laut denken geht schnell, Tippen nicht. Sie sprechen, und fertiger Text landet an Ihrem Cursor, so wie Sie schreiben. Dieser Mod bringt den Kern von FlowVoice zu AI-ME.",
+      L"きっかけは単純な不満でした。声に出して考えるのは速いのに、タイピングは遅い。話すだけで、あなたの書き方で仕上がったテキストがカーソル位置に入ります。この Mod は FlowVoice の中核を AI-ME にもたらします。",
+      L"它源于一个简单的烦恼：边想边说很快，打字却不然。你开口说话，成稿的文本就会以你的写作方式出现在光标处。这个 Mod 将 FlowVoice 的核心带到了 AI-ME。",
+      L"Всё началось с простой досады: думать вслух быстро, а печатать — нет. Вы говорите, и готовый текст появляется у курсора, так, как пишете вы. Этот мод переносит основу FlowVoice в AI-ME.",
+      L"इसकी शुरुआत एक छोटी-सी परेशानी से हुई: ज़ोर से सोचना तेज़ है, टाइप करना नहीं। आप बोलते हैं, और तैयार टेक्स्ट आपके लिखने के तरीके में कर्सर की जगह पहुँच जाता है। यह मॉड FlowVoice का मूल AI-ME में लाता है।",
+      L"এর শুরু একটি সাধারণ বিরক্তি থেকে: জোরে ভাবা দ্রুত, টাইপ করা নয়। আপনি বলেন, আর তৈরি টেক্সট আপনার লেখার ধরনে কার্সারের জায়গায় পৌঁছে যায়। এই মড FlowVoice-এর মূল অংশটি AI-ME-এ নিয়ে আসে।"}},
     {{L"Like it? Help the mod keep going.",
       L"¿Te gusta? Ayuda a que el mod siga.",
       L"Gostou? Ajude o mod a continuar.",
@@ -20709,16 +20709,16 @@ constexpr UiText kUiTexts[] = {
       L"Проект",
       L"प्रोजेक्ट",
       L"প্রকল্প"}},
-    {{L"The mod on Windhawk",
-      L"El mod en Windhawk",
-      L"O mod no Windhawk",
-      L"Le mod sur Windhawk",
-      L"Der Mod bei Windhawk",
-      L"Windhawk の Mod ページ",
-      L"Windhawk 上的 Mod",
-      L"Мод в Windhawk",
-      L"Windhawk पर मॉड",
-      L"Windhawk-এ মডটি"}},
+    {{L"The mod on AI-ME",
+      L"El mod en AI-ME",
+      L"O mod no AI-ME",
+      L"Le mod sur AI-ME",
+      L"Der Mod bei AI-ME",
+      L"AI-ME の Mod ページ",
+      L"AI-ME 上的 Mod",
+      L"Мод в AI-ME",
+      L"AI-ME पर मॉड",
+      L"AI-ME-এ মডটি"}},
     {{L"Source code",
       L"Código fuente",
       L"Código-fonte",
@@ -20759,16 +20759,16 @@ constexpr UiText kUiTexts[] = {
       L"Обратная связь",
       L"फ़ीडबैक",
       L"মতামত"}},
-    {{L"Opens a form on the Windhawk mods GitHub (github.com/ramensoftware/windhawk-mods) with the mod and Windows versions already filled in. Nothing you dictated is sent.",
-      L"Abre un formulario en el GitHub de los mods de Windhawk (github.com/ramensoftware/windhawk-mods) con las versiones del mod y de Windows ya completadas. No se envía nada de lo que dictaste.",
-      L"Abre um formulário no GitHub dos mods do Windhawk (github.com/ramensoftware/windhawk-mods) com a versão do mod e do Windows já preenchidas. Nada do que você ditou é enviado.",
-      L"Ouvre un formulaire sur le GitHub des mods Windhawk (github.com/ramensoftware/windhawk-mods) avec les versions du mod et de Windows déjà remplies. Rien de ce que vous avez dicté n'est envoyé.",
-      L"Öffnet ein Formular im GitHub der Windhawk-Mods (github.com/ramensoftware/windhawk-mods), in dem die Mod- und die Windows-Version bereits ausgefüllt sind. Nichts von dem, was Sie diktiert haben, wird gesendet.",
-      L"Windhawk mods の GitHub (github.com/ramensoftware/windhawk-mods) で、Mod と Windows のバージョンが入力済みのフォームを開きます。音声入力した内容は送信されません。",
-      L"在 Windhawk mods 的 GitHub (github.com/ramensoftware/windhawk-mods) 上打开一个表单，并预先填好 Mod 和 Windows 的版本。不会发送你语音输入的任何内容。",
-      L"Открывает форму на GitHub модов Windhawk (github.com/ramensoftware/windhawk-mods), где уже указаны версии мода и Windows. Ничего из надиктованного не отправляется.",
-      L"Windhawk मॉड्स के GitHub (github.com/ramensoftware/windhawk-mods) पर एक फ़ॉर्म खोलता है जिसमें मॉड और Windows के संस्करण पहले से भरे होते हैं। आपने जो कुछ भी डिक्टेट किया, वह नहीं भेजा जाता।",
-      L"Windhawk মডের GitHub-এ (github.com/ramensoftware/windhawk-mods) একটি ফর্ম খোলে, যেখানে মড ও Windows-এর সংস্করণ আগে থেকেই পূরণ করা থাকে। আপনার ডিক্টেট করা কিছুই পাঠানো হয় না।"}},
+    {{L"Opens a form on the AI-ME mods GitHub (github.com/RobsHs/AI-ME) with the mod and Windows versions already filled in. Nothing you dictated is sent.",
+      L"Abre un formulario en el GitHub de los mods de AI-ME (github.com/RobsHs/AI-ME) con las versiones del mod y de Windows ya completadas. No se envía nada de lo que dictaste.",
+      L"Abre um formulário no GitHub dos mods do AI-ME (github.com/RobsHs/AI-ME) com a versão do mod e do Windows já preenchidas. Nada do que você ditou é enviado.",
+      L"Ouvre un formulaire sur le GitHub des mods AI-ME (github.com/RobsHs/AI-ME) avec les versions du mod et de Windows déjà remplies. Rien de ce que vous avez dicté n'est envoyé.",
+      L"Öffnet ein Formular im GitHub der AI-ME-Mods (github.com/RobsHs/AI-ME), in dem die Mod- und die Windows-Version bereits ausgefüllt sind. Nichts von dem, was Sie diktiert haben, wird gesendet.",
+      L"AI-ME mods の GitHub (github.com/RobsHs/AI-ME) で、Mod と Windows のバージョンが入力済みのフォームを開きます。音声入力した内容は送信されません。",
+      L"在 AI-ME mods 的 GitHub (github.com/RobsHs/AI-ME) 上打开一个表单，并预先填好 Mod 和 Windows 的版本。不会发送你语音输入的任何内容。",
+      L"Открывает форму на GitHub модов AI-ME (github.com/RobsHs/AI-ME), где уже указаны версии мода и Windows. Ничего из надиктованного не отправляется.",
+      L"AI-ME मॉड्स के GitHub (github.com/RobsHs/AI-ME) पर एक फ़ॉर्म खोलता है जिसमें मॉड और Windows के संस्करण पहले से भरे होते हैं। आपने जो कुछ भी डिक्टेट किया, वह नहीं भेजा जाता।",
+      L"AI-ME মডের GitHub-এ (github.com/RobsHs/AI-ME) একটি ফর্ম খোলে, যেখানে মড ও Windows-এর সংস্করণ আগে থেকেই পূরণ করা থাকে। আপনার ডিক্টেট করা কিছুই পাঠানো হয় না।"}},
     {{L"Report a problem",
       L"Reportar un problema",
       L"Reportar um problema",
@@ -22307,7 +22307,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     g_module = hInstance;
 
-    if (!WhTool_ModInit()) {
+    if (!AppInit()) {
         CloseHandle(hMutex);
         return 1;
     }
@@ -22316,7 +22316,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         WaitForSingleObject(g_uiThread, INFINITE);
     }
 
-    WhTool_ModUninit();
+    AppUninit();
     CloseHandle(hMutex);
     return 0;
 }
