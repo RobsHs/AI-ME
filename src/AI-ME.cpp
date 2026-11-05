@@ -12941,7 +12941,31 @@ LRESULT CALLBACK SettingsEditProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
         }
         return 0;
     }
+    if (msg == WM_PAINT) {
+        LRESULT res = DefSubclassProc(hwnd, msg, wp, lp);
+        if (GetWindowTextLengthW(hwnd) == 0 && GetFocus() != hwnd) {
+            PCWSTR cue = (PCWSTR)GetPropW(hwnd, L"AIME_Cue");
+            if (cue && *cue) {
+                HDC hdc = GetDC(hwnd);
+                if (hdc) {
+                    RECT rc;
+                    GetClientRect(hwnd, &rc);
+                    rc.left += 8;
+                    HFONT font = (HFONT)SendMessage(hwnd, WM_GETFONT, 0, 0);
+                    HFONT oldFont = font ? (HFONT)SelectObject(hdc, font) : nullptr;
+                    SetBkMode(hdc, TRANSPARENT);
+                    SetTextColor(hdc, RGB(100, 116, 139));
+                    DrawTextW(hdc, cue, -1, &rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                    if (oldFont) SelectObject(hdc, oldFont);
+                    ReleaseDC(hwnd, hdc);
+                }
+            }
+        }
+        return res;
+    }
     if (msg == WM_NCDESTROY) {
+        PWSTR cue = (PWSTR)RemovePropW(hwnd, L"AIME_Cue");
+        if (cue) free(cue);
         RemoveWindowSubclass(hwnd, SettingsEditProc, 0);
     }
     return DefSubclassProc(hwnd, msg, wp, lp);
@@ -13227,6 +13251,8 @@ void SettingsWindow::Open(Page page) {
     m_icons[1] = (HICON)LoadImageW(g_module, MAKEINTRESOURCE(1), IMAGE_ICON, bigSize, bigSize, LR_DEFAULTCOLOR);
     if (!m_icons[0]) m_icons[0] = MakeMarkIcon(iconSm);
     if (!m_icons[1]) m_icons[1] = MakeMarkIcon(bigSize);
+    SetClassLongPtrW(m_hwnd, GCLP_HICON, (LONG_PTR)m_icons[1]);
+    SetClassLongPtrW(m_hwnd, GCLP_HICONSM, (LONG_PTR)m_icons[0]);
     SendMessage(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)m_icons[0]);
     SendMessage(m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)m_icons[1]);
     LoadTheme();
@@ -13512,8 +13538,11 @@ void SettingsWindow::AddEdit(float x, float y, float w, float h, const std::stri
     if (!edit) {
         return;
     }
+    SetWindowTheme(edit, L"", L"");
+    SendMessage(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELONG(8, 8));
     SendMessage(edit, WM_SETFONT, (WPARAM)m_editFont, FALSE);
     SendMessage(edit, EM_SETCUEBANNER, TRUE, (LPARAM)placeholder.c_str());
+    SetPropW(edit, L"AIME_Cue", _wcsdup(placeholder.c_str()));
     SendMessage(edit, EM_SETLIMITTEXT, multiline ? 3000 : 400, 0);
     SetWindowSubclass(edit, SettingsEditProc, 0, 0);
     m_edits.push_back({key, edit, multiline, true});
@@ -13557,8 +13586,8 @@ void SettingsWindow::PlaceEdits() {
             field.shown = false;
             continue;
         }
-        const float padX = 10;
-        const float padY = field.multiline ? 8 : (box->r.bottom - box->r.top - 20) / 2;
+        const float padX = 8;
+        const float padY = field.multiline ? 6 : 4;
         const int left = (int)std::lround((RailW() + box->r.left + padX) * scale);
         const int top = (int)std::lround((box->r.top - m_scroll + padY) * scale);
         const int right = (int)std::lround((RailW() + box->r.right - padX) * scale);
@@ -15654,8 +15683,8 @@ void SettingsWindow::BuildAbout(float x, float w, float& y) {
     left += AddText(x + 16, left, colW - 32, L"Freda Giovani", 16, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     left += AddText(x + 16, left, colW - 32, L"GitHub: @robshs", 12.5f, DWRITE_FONT_WEIGHT_NORMAL, 2,
                     true) + 10;
-    linkRow(x, left, T(L"GitHub Profile", L"Perfil no GitHub"), "https://github.com/robshs");
-    linkRow(x, left, T(L"Repository", L"Repositório"), "https://github.com/robshs");
+    linkRow(x, left, T(L"GitHub Profile (@robshs)", L"Perfil no GitHub (@robshs)"), "https://github.com/robshs");
+    linkRow(x, left, T(L"Repository (AI-ME)", L"Repositório (AI-ME)"), "https://github.com/RobsHs/AI-ME");
 
     const float px = x + colW + 16;
     AddSection(px + 16, colW, right, T(L"Project Details", L"Detalhes do Projeto"));
@@ -15829,12 +15858,11 @@ void SettingsWindow::DrawWidget(const Widget& w, bool hover) {
                     host = host.substr(wcslen(prefix));
                 }
             }
-            host = host.substr(0, host.find(L'/'));
             if (IDWriteTextFormat* hostFont = Format(11.5f, DWRITE_FONT_WEIGHT_NORMAL, true)) {
                 hostFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
                 text(host, hostFont,
                      D2D1::RectF(w.r.left + 16 + labelW, w.r.top, w.r.right - 32, w.r.bottom),
-                     p.text3);
+                     hover ? p.accent : p.text3);
                 hostFont->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             }
             break;
@@ -17653,6 +17681,7 @@ LRESULT SettingsWindow::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORSTATIC:
+            SetBkMode((HDC)wp, OPAQUE);
             SetTextColor((HDC)wp, ToColorRef(m_palette.text));
             SetBkColor((HDC)wp, ToColorRef(m_palette.surface2));
             return (LRESULT)m_editBrush;
