@@ -7,8 +7,8 @@
 
   <Identity
     Name="FredaGiovani.AIME"
-    Publisher="CN=FredaGiovani"
-    Version="2.0.0.0"
+    Publisher="CN=Freda Giovani (AI-ME), O=AI-ME Open Source Project, OU=Software Development"
+    Version="2.1.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

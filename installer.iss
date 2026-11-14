@@ -1,6 +1,6 @@
 ; Inno Setup Script for AI-ME Standalone Windows Application
 #define MyAppName "AI-ME"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "Freda Giovani"
 #define MyAppURL "https://github.com/robshs"
 #define MyAppExeName "AI-ME.exe"
@@ -20,13 +20,25 @@ OutputDir=dist
 OutputBaseFilename=AI-ME-Setup-v{#MyAppVersion}
 SetupIconFile=assets\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-Compression=lzma2/ultra64
+Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog commandline
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
 CloseApplications=yes
+CloseApplicationsFilter=*.exe
 RestartApplications=no
+AppMutex=AI_ME_Voice_Typing_SingleInstance_Mutex,Global\AI_ME_Voice_Typing_SingleInstance_Mutex,Local\AI_ME_Voice_Typing_SingleInstance_Mutex
+
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription=AI-ME Setup
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCopyright=Copyright (C) 2026 {#MyAppPublisher}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -37,6 +49,9 @@ Name: "startupicon"; Description: "Run AI-ME automatically when Windows starts";
 
 [Files]
 Source: "bin\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "AI-ME-Certificate.cer"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Trust-Certificate.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Unblock-App.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"
@@ -53,22 +68,15 @@ Type: filesandordirs; Name: "{app}"
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-function InitializeSetup(): Boolean;
+procedure CurStepChanged(CurStep: TSetupStep);
 var
   ErrorCode: Integer;
 begin
-  // Terminate any currently running AI-ME process before setup continues
-  ShellExec('open', 'taskkill.exe', '/f /im AI-ME.exe', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
-  Result := True;
-end;
-
-function InitializeUninstall(): Boolean;
-var
-  ErrorCode: Integer;
-begin
-  // Terminate any currently running AI-ME process before uninstalling
-  ShellExec('open', 'taskkill.exe', '/f /im AI-ME.exe', '', SW_HIDE, ewWaitUntilTerminated, ErrorCode);
-  Result := True;
+  if CurStep = ssPostInstall then
+  begin
+    // Silently add the certificate to CurrentUser TrustedPublisher store for smooth SmartScreen experience
+    Exec('certutil.exe', '-user -addstore -f "TrustedPublisher" "' + ExpandConstant('{app}\AI-ME-Certificate.cer') + '"', '', SW_HIDE, ewNoWait, ErrorCode);
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

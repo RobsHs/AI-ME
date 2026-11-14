@@ -22,18 +22,16 @@ if ($makeAppx) {
     Write-Host "[*] Found MakeAppx at: $makeAppx" -ForegroundColor Green
     if (-not (Test-Path "dist")) { New-Item -ItemType Directory -Path "dist" | Out-Null }
     
-    $outputMsix = "dist\AI-ME.msix"
+    $outputMsix = "dist\AI-ME-v2.1.0.msix"
     Write-Host "[*] Creating MSIX package: $outputMsix ..." -ForegroundColor Green
     & $makeAppx pack /d "package" /p $outputMsix /o
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[SUCCESS] Created $outputMsix successfully!" -ForegroundColor Green
-        Write-Host "Note: To install an MSIX locally, sign it with a self-signed certificate using signtool.exe or enable Developer Mode." -ForegroundColor Cyan
+        Write-Host "[*] Signing MSIX package..." -ForegroundColor Cyan
+        & "$PSScriptRoot\tools\Sign-Binaries.ps1" -Files $outputMsix
     }
 } else {
     Write-Host "[i] MakeAppx.exe (Windows SDK) was not found on your system." -ForegroundColor Yellow
-    Write-Host "    You have two easy ways to package into MSIX:" -ForegroundColor Yellow
-    Write-Host "    1. Install MSIX Packaging Tool from Microsoft Store (Free)" -ForegroundColor White
-    Write-Host "    2. Install Windows SDK via 'winget install Microsoft.WindowsSDK'" -ForegroundColor White
     Write-Host "    The 'package/' folder is already 100% prepared with AppxManifest.xml and all Assets!" -ForegroundColor Cyan
 }

@@ -16,7 +16,7 @@
 #include <cwchar>
 
 #define APP_ID L"AI-ME"
-#define APP_VERSION L"2.0.0"
+#define APP_VERSION L"2.1.0"
 
 static const WCHAR kAppRegSubKey[] = LR"(Software\AI-ME)";
 
@@ -103,6 +103,8 @@ inline int Wh_GetIntSetting(PCWSTR name) {
 constexpr UINT kCmdExit = 504;
 
 #include <audioclient.h>
+#include <mmreg.h>
+#include <ksmedia.h>
 #include <commctrl.h>
 #include <d2d1.h>
 #include <d2d1_3.h>
@@ -5441,20 +5443,29 @@ struct CaptureState {
     }
 };
 
+static const GUID kGuidSubtypeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+static const GUID kGuidSubtypePcm   = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+
 std::wstring MicErrorText(HRESULT hr) {
     if (hr == E_ACCESSDENIED) {
-        return T(L"Windows blocked the microphone. Allow desktop apps to use "
-                 L"it in Settings > Privacy & security > Microphone.",
-                 L"O Windows bloqueou o microfone. Permita que apps da área de "
-                 L"trabalho o usem em Configurações > Privacidade e segurança "
-                 L"> Microfone.");
+        return T(L"Windows blocked microphone access. Enable 'Allow desktop apps to access your microphone' in Windows Settings > Privacy & security > Microphone.",
+                 L"O Windows bloqueou o microfone. Permita que apps da área de trabalho o usem em Configurações > Privacidade e segurança > Microfone.");
     }
     if (hr == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) || hr == E_NOTFOUND) {
-        return T(L"No microphone found.", L"Nenhum microfone encontrado.");
+        return T(L"No microphone detected. Please plug in or activate an audio input device.",
+                 L"Nenhum microfone encontrado. Conecte um dispositivo de entrada de áudio.");
     }
     if (hr == AUDCLNT_E_DEVICE_IN_USE) {
-        return T(L"Another app is using the microphone exclusively.",
+        return T(L"Another application is using the microphone exclusively.",
                  L"Outro app está usando o microfone com exclusividade.");
+    }
+    if (hr == AUDCLNT_E_UNSUPPORTED_FORMAT) {
+        return T(L"Microphone format not supported by hardware driver.",
+                 L"Formato de áudio não suportado pelo driver de áudio.");
+    }
+    if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
+        return T(L"Microphone disconnected or reset by Windows.",
+                 L"Microfone desconectado ou reiniciado pelo Windows.");
     }
     WCHAR text[160];
     swprintf_s(text,
@@ -5501,114 +5512,364 @@ ComPtr<IMMDevice> FindMicrophone(IMMDeviceEnumerator* enumerator,
     return nullptr;
 }
 
+// Universal Audio Reader and Resampler for 100% device compatibility
+struct AudioReader {
+    bool isFloat = true;
+    int channels = 1;
+    int sampleRate = 16000;
+    int bitsPerSample = 32;
+    int bytesPerFrame = 4;
+    bool needsConversion = false;
+
+    double resampleRatio = 1.0;
+    double resamplePhase = 0.0;
+    float lastMonoSample = 0.0f;
+    bool hasLastMonoSample = false;
+};
+
+inline AudioReader InitAudioReader(const WAVEFORMATEX* pWfx) {
+    AudioReader r;
+    r.channels = pWfx->nChannels ? pWfx->nChannels : 1;
+    r.sampleRate = pWfx->nSamplesPerSec ? pWfx->nSamplesPerSec : 16000;
+    r.bitsPerSample = pWfx->wBitsPerSample ? pWfx->wBitsPerSample : 16;
+    r.bytesPerFrame = pWfx->nBlockAlign;
+    if (r.bytesPerFrame <= 0) {
+        r.bytesPerFrame = (r.bitsPerSample / 8) * r.channels;
+    }
+
+    if (pWfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+        r.isFloat = true;
+    } else if (pWfx->wFormatTag == WAVE_FORMAT_PCM) {
+        r.isFloat = false;
+    } else if (pWfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE && pWfx->cbSize >= 22) {
+        const WAVEFORMATEXTENSIBLE* pExt = (const WAVEFORMATEXTENSIBLE*)pWfx;
+        if (memcmp(&pExt->SubFormat, &kGuidSubtypeFloat, sizeof(GUID)) == 0) {
+            r.isFloat = true;
+        } else {
+            r.isFloat = false;
+        }
+    } else {
+        r.isFloat = false;
+    }
+
+    if (r.sampleRate != kSampleRate || r.channels != 1 || !r.isFloat) {
+        r.needsConversion = true;
+    }
+    r.resampleRatio = (double)r.sampleRate / (double)kSampleRate;
+    r.resamplePhase = 0.0;
+    r.lastMonoSample = 0.0f;
+    r.hasLastMonoSample = false;
+    return r;
+}
+
+inline void ProcessCaptureFrames(AudioReader& reader, const BYTE* pData, UINT32 numFrames, DWORD flags,
+                                 std::vector<float>& out16kSamples) {
+    if (numFrames == 0) return;
+
+    if (flags & AUDCLNT_BUFFERFLAGS_SILENT || !pData) {
+        size_t outCount = (size_t)((double)numFrames / reader.resampleRatio);
+        if (outCount == 0 && numFrames > 0) outCount = 1;
+        out16kSamples.insert(out16kSamples.end(), outCount, 0.0f);
+        return;
+    }
+
+    if (!reader.needsConversion) {
+        const float* pFloats = (const float*)pData;
+        out16kSamples.insert(out16kSamples.end(), pFloats, pFloats + numFrames);
+        return;
+    }
+
+    std::vector<float> monoIn;
+    monoIn.resize(numFrames);
+
+    const int channels = reader.channels;
+    const int bytesPerFrame = reader.bytesPerFrame;
+    const int bits = reader.bitsPerSample;
+    const bool isFloat = reader.isFloat;
+
+    for (UINT32 i = 0; i < numFrames; ++i) {
+        const BYTE* framePtr = pData + i * bytesPerFrame;
+        float sum = 0.0f;
+        int activeCh = channels > 2 ? 2 : channels;
+        if (activeCh <= 0) activeCh = 1;
+
+        for (int ch = 0; ch < activeCh; ++ch) {
+            float val = 0.0f;
+            if (isFloat) {
+                val = *(const float*)(framePtr + ch * sizeof(float));
+            } else if (bits == 16) {
+                int16_t s16 = *(const int16_t*)(framePtr + ch * sizeof(int16_t));
+                val = s16 / 32768.0f;
+            } else if (bits == 24) {
+                if (bytesPerFrame == channels * 3) {
+                    const BYTE* b = framePtr + ch * 3;
+                    int32_t s24 = (int32_t)((b[0] << 8) | (b[1] << 16) | (b[2] << 24));
+                    val = (s24 >> 8) / 8388608.0f;
+                } else {
+                    int32_t s32 = *(const int32_t*)(framePtr + ch * 4);
+                    val = (s32 >> 8) / 8388608.0f;
+                }
+            } else if (bits == 32) {
+                int32_t s32 = *(const int32_t*)(framePtr + ch * sizeof(int32_t));
+                val = s32 / 2147483648.0f;
+            }
+            sum += val;
+        }
+        float mono = sum / (float)activeCh;
+        if (mono > 1.0f) mono = 1.0f;
+        else if (mono < -1.0f) mono = -1.0f;
+        monoIn[i] = mono;
+    }
+
+    if (reader.sampleRate == kSampleRate) {
+        out16kSamples.insert(out16kSamples.end(), monoIn.begin(), monoIn.end());
+        return;
+    }
+
+    const double ratio = reader.resampleRatio;
+    double phase = reader.resamplePhase;
+
+    while (phase < (double)numFrames) {
+        size_t idx = (size_t)phase;
+        double frac = phase - (double)idx;
+
+        float s0 = (idx == 0 && reader.hasLastMonoSample) ? reader.lastMonoSample : monoIn[idx];
+        float s1 = (idx + 1 < numFrames) ? monoIn[idx + 1] : monoIn[idx];
+
+        float interp = (float)((1.0 - frac) * (double)s0 + frac * (double)s1);
+        if (interp > 1.0f) interp = 1.0f;
+        else if (interp < -1.0f) interp = -1.0f;
+
+        out16kSamples.push_back(interp);
+        phase += ratio;
+    }
+
+    reader.resamplePhase = phase - (double)numFrames;
+    if (!monoIn.empty()) {
+        reader.lastMonoSample = monoIn.back();
+        reader.hasLastMonoSample = true;
+    }
+}
+
 void Capture(CaptureState& state) {
     auto fail = [&](HRESULT hr) {
         Log(L"Microphone not opened: 0x%08X", (unsigned)hr);
+        if (hr == E_ACCESSDENIED) {
+            ShellExecuteW(nullptr, L"open", L"ms-settings:privacy-microphone", nullptr, nullptr, SW_SHOWNORMAL);
+        }
         state.error = MicErrorText(hr);
         SetEvent(state.readyEvent);
     };
+
     ComPtr<IMMDeviceEnumerator> enumerator;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
                                   CLSCTX_ALL, __uuidof(IMMDeviceEnumerator),
-                          (void**)enumerator.GetAddressOf());
+                                  (void**)enumerator.GetAddressOf());
     if (FAILED(hr)) {
         fail(hr);
         return;
     }
+
     ComPtr<IMMDevice> device;
     if (!state.micName.empty()) {
         device = FindMicrophone(enumerator.Get(), state.micName);
         if (!device) {
-            Log(L"Chosen microphone not found, using the default one");
+            Log(L"Chosen microphone not found, falling back to system default");
             state.usedFallback = true;
         }
     }
     if (!device) {
-        hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole,
-                                                 device.GetAddressOf());
+        hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, device.GetAddressOf());
         if (FAILED(hr)) {
-            fail(hr);
+            // Fallback 1: Communications endpoint (Bluetooth/headsets)
+            hr = enumerator->GetDefaultAudioEndpoint(eCapture, eCommunications, device.GetAddressOf());
+        }
+        if (FAILED(hr)) {
+            // Fallback 2: Any active audio endpoint
+            ComPtr<IMMDeviceCollection> coll;
+            if (SUCCEEDED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, coll.GetAddressOf()))) {
+                UINT cnt = 0;
+                if (SUCCEEDED(coll->GetCount(&cnt)) && cnt > 0) {
+                    coll->Item(0, device.GetAddressOf());
+                }
+            }
+        }
+        if (!device) {
+            fail(FAILED(hr) ? hr : E_NOTFOUND);
             return;
         }
     }
+
     ComPtr<IAudioClient> client;
-    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                          (void**)client.GetAddressOf());
-    if (FAILED(hr)) {
-        fail(hr);
-        return;
-    }
-    // Windows converts whatever the device delivers to 16 kHz mono floats.
-    WAVEFORMATEX format{};
-    format.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-    format.nChannels = 1;
-    format.nSamplesPerSec = kSampleRate;
-    format.wBitsPerSample = 32;
-    format.nBlockAlign = 4;
-    format.nAvgBytesPerSec = kSampleRate * 4;
-    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                            AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
+    WAVEFORMATEX* pMixFormat = nullptr;
+    AudioReader reader;
+    bool useEventCallback = true;
+    HANDLE audioEvent = nullptr;
+    bool initialized = false;
+
+    // Target format: 16 kHz IEEE float mono
+    WAVEFORMATEX format16k{};
+    format16k.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
+    format16k.nChannels = 1;
+    format16k.nSamplesPerSec = kSampleRate;
+    format16k.wBitsPerSample = 32;
+    format16k.nBlockAlign = 4;
+    format16k.nAvgBytesPerSec = kSampleRate * 4;
+
+    // Tier 1: Direct 16k IEEE float with AUTOCONVERTPCM + EVENTCALLBACK
+    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)client.GetAddressOf());
+    if (SUCCEEDED(hr)) {
+        hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
                                 AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
                                 AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                            2000000 /* 200 ms */, 0, &format, nullptr);
-    if (FAILED(hr)) {
-        fail(hr);
-        return;
-    }
-    HANDLE audioEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    ComPtr<IAudioCaptureClient> capture;
-    if (!audioEvent || FAILED(hr = client->SetEventHandle(audioEvent)) ||
-        FAILED(hr = client->GetService(__uuidof(IAudioCaptureClient),
-                                       (void**)capture.GetAddressOf())) ||
-        FAILED(hr = client->Start())) {
-        if (audioEvent) {
-            CloseHandle(audioEvent);
+                                2000000 /* 200 ms */, 0, &format16k, nullptr);
+        if (SUCCEEDED(hr)) {
+            audioEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+            if (audioEvent && SUCCEEDED(client->SetEventHandle(audioEvent))) {
+                initialized = true;
+                useEventCallback = true;
+                reader = InitAudioReader(&format16k);
+            } else {
+                if (audioEvent) { CloseHandle(audioEvent); audioEvent = nullptr; }
+            }
         }
+    }
+
+    // Tier 2: Direct 16k IEEE float with AUTOCONVERTPCM (timer polling mode)
+    if (!initialized) {
+        client.Reset();
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)client.GetAddressOf());
+        if (SUCCEEDED(hr)) {
+            hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
+                                    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                                    2000000, 0, &format16k, nullptr);
+            if (SUCCEEDED(hr)) {
+                initialized = true;
+                useEventCallback = false;
+                reader = InitAudioReader(&format16k);
+            }
+        }
+    }
+
+    // Tier 3: Native Mix Format with EVENTCALLBACK (universal hardware support)
+    if (!initialized) {
+        client.Reset();
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)client.GetAddressOf());
+        if (SUCCEEDED(hr) && SUCCEEDED(client->GetMixFormat(&pMixFormat)) && pMixFormat) {
+            hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                    AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                    2000000, 0, pMixFormat, nullptr);
+            if (SUCCEEDED(hr)) {
+                audioEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+                if (audioEvent && SUCCEEDED(client->SetEventHandle(audioEvent))) {
+                    initialized = true;
+                    useEventCallback = true;
+                    reader = InitAudioReader(pMixFormat);
+                } else {
+                    if (audioEvent) { CloseHandle(audioEvent); audioEvent = nullptr; }
+                }
+            }
+        }
+    }
+
+    // Tier 4: Native Mix Format without EVENTCALLBACK (polling mode fallback)
+    if (!initialized) {
+        client.Reset();
+        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)client.GetAddressOf());
+        if (SUCCEEDED(hr)) {
+            if (!pMixFormat) {
+                client->GetMixFormat(&pMixFormat);
+            }
+            if (pMixFormat) {
+                hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                        0,
+                                        2000000, 0, pMixFormat, nullptr);
+                if (SUCCEEDED(hr)) {
+                    initialized = true;
+                    useEventCallback = false;
+                    reader = InitAudioReader(pMixFormat);
+                }
+            }
+        }
+    }
+
+    if (pMixFormat) {
+        CoTaskMemFree(pMixFormat);
+        pMixFormat = nullptr;
+    }
+
+    if (!initialized || !client) {
+        if (audioEvent) CloseHandle(audioEvent);
+        fail(FAILED(hr) ? hr : E_FAIL);
+        return;
+    }
+
+    ComPtr<IAudioCaptureClient> capture;
+    hr = client->GetService(__uuidof(IAudioCaptureClient), (void**)capture.GetAddressOf());
+    if (FAILED(hr) || FAILED(hr = client->Start())) {
+        if (audioEvent) CloseHandle(audioEvent);
         fail(hr);
         return;
     }
+
     SetEvent(state.readyEvent);
 
     const HANDLE waits[] = {state.stopEvent, audioEvent};
+    std::vector<float> resampled;
+    resampled.reserve(4096);
+
     for (;;) {
-        const DWORD wait = WaitForMultipleObjects(2, waits, FALSE, 2000);
-        if (wait == WAIT_OBJECT_0) {
-            break;
+        DWORD wait = WAIT_TIMEOUT;
+        if (useEventCallback && audioEvent) {
+            wait = WaitForMultipleObjects(2, waits, FALSE, 500);
+            if (wait == WAIT_OBJECT_0) {
+                break;
+            }
+        } else {
+            wait = WaitForSingleObject(state.stopEvent, 15);
+            if (wait == WAIT_OBJECT_0) {
+                break;
+            }
         }
+
         UINT32 packet = 0;
         while (SUCCEEDED(hr = capture->GetNextPacketSize(&packet)) && packet) {
-            BYTE* data;
-            UINT32 frames;
-            DWORD flags;
+            BYTE* data = nullptr;
+            UINT32 frames = 0;
+            DWORD flags = 0;
             hr = capture->GetBuffer(&data, &frames, &flags, nullptr, nullptr);
             if (FAILED(hr)) {
                 break;
             }
-            const float* samples = (const float*)data;
-            std::vector<float> silence;
-            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                silence.assign(frames, 0.0f);
-                samples = silence.data();
+
+            resampled.clear();
+            ProcessCaptureFrames(reader, data, frames, flags, resampled);
+
+            if (!resampled.empty()) {
+                g_micLevel = std::min(1.0f, std::sqrt(Rms(resampled.data(), resampled.size()) * 28.0f));
+                AcquireSRWLockExclusive(&state.lock);
+                if (state.samples.size() < (size_t)kSampleRate * kMaxRecordingSeconds) {
+                    state.samples.insert(state.samples.end(), resampled.begin(), resampled.end());
+                }
+                ReleaseSRWLockExclusive(&state.lock);
             }
-            // Quiet microphones peak around RMS 0.03 while speaking: that
-            // maps near the top.
-            g_micLevel = std::min(1.0f, std::sqrt(Rms(samples, frames) * 28));
-            AcquireSRWLockExclusive(&state.lock);
-            // (Past the limit, until the stop arrives: nothing more kept.)
-            if (state.samples.size() < (size_t)kSampleRate * kMaxRecordingSeconds) {
-                state.samples.insert(state.samples.end(), samples, samples + frames);
-            }
-            ReleaseSRWLockExclusive(&state.lock);
+
             capture->ReleaseBuffer(frames);
         }
+
         if (FAILED(hr)) {
             Log(L"Microphone failed while recording: 0x%08X", (unsigned)hr);
             state.failed = true;
             break;
         }
     }
+
     client->Stop();
-    CloseHandle(audioEvent);
+    if (audioEvent) {
+        CloseHandle(audioEvent);
+    }
 }
 
 DWORD WINAPI CaptureThreadProc(void* param) {
@@ -5641,7 +5902,7 @@ class Recorder {
             return false;
         }
         // Bluetooth microphones can take a few seconds to open.
-        if (WaitForSingleObject(m_state->readyEvent, 5000) != WAIT_OBJECT_0) {
+        if (WaitForSingleObject(m_state->readyEvent, 8000) != WAIT_OBJECT_0) {
             *error = T(L"The microphone didn't respond.",
                        L"O microfone não respondeu.");
             Stop();
@@ -22277,8 +22538,14 @@ const UiText* FindUiText(std::wstring_view english, std::wstring_view portuguese
 // Standalone Windows Entry Point
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
-    HANDLE hMutex = CreateMutexW(nullptr, TRUE, LR"(Global\AI_ME_Voice_Typing_SingleInstance_Mutex)");
-    if (!hMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, LR"(Local\AI_ME_Voice_Typing_SingleInstance_Mutex)");
+    if (!hMutex) {
+        hMutex = CreateMutexW(nullptr, TRUE, LR"(Global\AI_ME_Voice_Typing_SingleInstance_Mutex)");
+    }
+    if (!hMutex) {
+        hMutex = CreateMutexW(nullptr, TRUE, L"AI_ME_Voice_Typing_SingleInstance_Mutex");
+    }
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND existing = FindWindowW(kSettingsClass, nullptr);
         if (existing) {
             ShowWindow(existing, SW_RESTORE);
@@ -22289,7 +22556,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
                 PostMessage(overlay, WM_APP_OPEN, 0, 0);
             }
         }
-        if (hMutex) CloseHandle(hMutex);
+        CloseHandle(hMutex);
         return 0;
     }
 
